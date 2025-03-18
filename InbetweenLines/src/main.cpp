@@ -65,16 +65,121 @@ struct State_t {
     std::vector<Coin> coins; // Collectable coins
     int score = 0;           // Player's score
     int coinSpawnTimer = 0;  // Timer for spawning new coins
-    const int coinSpawnInterval = 120; // Spawn check every ~2 seconds at 60fps
+    const int coinSpawnInterval = 20; // Spawn check every ~2 seconds at 60fps
     const int maxCoinsOnScreen = 10;  // Maximum number of coins allowed at once
     std::vector<Explosion> explosions; // Active explosions
     const int coinLifetime = 200;      // Coin lifetime in frames (10 seconds at 60fps)
+    
+    // Animation state for squash and stretch
+    bool isMovingHorizontal = false;   // Is player currently moving horizontally
+    int lastMoveDirection = 0;         // Last movement direction (-1 left, 1 right, 0 none)
+    int moveFrames = 0;                // Counter for tracking movement duration
+    
+    // Current animation dimensions (for collision detection)
+    int currentWidth = PLAYER_WIDTH;
+    int currentHeight = PLAYER_HEIGHT;
+    int xOffset = 0;
+    int yOffset = 0;
 } state;
 
 // Function to render the player with blinking eyes
 void RenderPlayer(IL::Notepad& notepad, State_t& state) {
-    notepad.Rectangle(state.position.x, state.position.y, PLAYER_WIDTH, PLAYER_HEIGHT, true);
-    notepad.Text("O", state.position.x + 1, state.position.y + 1);
+    // Calculate animation parameters based on movement
+    int widthModifier = 0;
+    int heightModifier = 0;
+    int eyeSpacing = 3;  // Default spacing between eyes
+    
+    // Squash when moving horizontally
+    if (state.isMovingHorizontal) {
+        widthModifier = -1;  // Make character wider
+        heightModifier = 1;  // Make character shorter
+        eyeSpacing = 4;      // Eyes further apart when squashed
+    }
+    
+    // Stretch when jumping or falling
+    if (!state.physics.isOnGround) {
+        if (state.physics.velocityY < 0) {
+            // Stretching upward during jump
+            widthModifier = 1;  // Make character narrower
+            heightModifier = -1; // Make character taller
+            eyeSpacing = 2;     // Eyes closer together when stretched
+        } else if (state.physics.velocityY > 2.0f) {
+            // Stretching downward during fall (only when falling fast)
+            widthModifier = 1;   // Make character narrower
+            heightModifier = -2; // Make character even taller during fall
+            eyeSpacing = 2;      // Eyes closer together when stretched
+        }
+    }
+    
+    // Limit the animation effect
+    if (widthModifier < -1) widthModifier = -1;
+    if (heightModifier < -2) heightModifier = -2;
+    if (widthModifier > 1) widthModifier = 1;
+    if (heightModifier > 1) heightModifier = 1;
+    
+    // Calculate adjusted dimensions
+    int adjustedWidth = PLAYER_WIDTH - widthModifier;
+    int adjustedHeight = PLAYER_HEIGHT - heightModifier;
+    
+    // Calculate the horizontal offset to center the character
+    int xOffset = (PLAYER_WIDTH - adjustedWidth) / 2;
+    
+    // Calculate the vertical offset - key change here:
+    // When squashing (heightModifier > 0), keep the bottom aligned
+    // When stretching (heightModifier < 0), center the stretch
+    int yOffset = 0;
+    if (heightModifier > 0) {
+        // For squash: maintain bottom position
+        yOffset = heightModifier; // Push down from the top
+    } else if (heightModifier < 0) {
+        // For stretch: center the stretch effect
+        yOffset = (PLAYER_HEIGHT - adjustedHeight) / 2;
+    }
+    
+    // Store current dimensions and offsets for collision detection
+    state.currentWidth = adjustedWidth;
+    state.currentHeight = adjustedHeight;
+    state.xOffset = xOffset;
+    state.yOffset = yOffset;
+    
+    // Render player body with adjusted dimensions
+    notepad.Rectangle(state.position.x + xOffset, state.position.y + yOffset, 
+                     adjustedWidth, adjustedHeight, false);
+    
+    // Update blinking logic
+    state.blinkTimer++;
+    
+    // Randomly start blinking every ~2 seconds (120 frames)
+    if (state.blinkTimer >= 120) {
+        state.blinkTimer = 0;
+        // 70% chance to blink
+        state.isBlinking = (rand() % 100) < 70;
+    }
+    
+    // Stop blinking after 10 frames
+    if (state.isBlinking && state.blinkTimer > 10) {
+        state.isBlinking = false;
+    }
+    
+    // Adjust eye position based on squash/stretch
+    int eyeYPosition = state.position.y + yOffset + 1;
+    
+    // Draw the eyes with adjusted spacing
+    if (state.isBlinking) {
+        // For blinking eyes, create a string with proper spacing
+        std::string eyeText = " -" + std::string(eyeSpacing - 2, ' ') + "-";
+        notepad.Text(state.position.x + xOffset + 1, eyeYPosition, eyeText);
+    } else {
+        // For open eyes, create a string with proper spacing
+        std::string eyeText = " O" + std::string(eyeSpacing - 2, ' ') + "O";
+        notepad.Text(state.position.x + xOffset + 1, eyeYPosition, eyeText);
+    }
+
+    // Draw the mouth (adjusted for squash/stretch)
+    int mouthYPosition = state.position.y + yOffset + adjustedHeight - 2;
+    int mouthWidth = adjustedWidth - 2;
+    std::string mouthText = " " + std::string(mouthWidth - 1, '~');
+    notepad.Text(state.position.x + xOffset + 1, mouthYPosition, mouthText);
 }
 
 // Function to render platforms
@@ -203,17 +308,22 @@ bool CheckPlatformCollision() {
         state.physics.isOnGround = false;
     }
     
+    // Calculate the actual player bounds based on current animation state
+    int playerLeft = state.position.x + state.xOffset;
+    int playerRight = playerLeft + state.currentWidth;
+    int playerBottom = state.position.y + state.yOffset + state.currentHeight;
+    
     for (const auto& platform : state.platforms) {
         // Check if player's bottom edge is near the platform's top edge
         // AND player is within the horizontal bounds of the platform
         if (state.physics.velocityY > 0 && 
-            state.position.y + 5 >= platform.y - 1 &&  // More forgiving collision (-1)
-            state.position.y + 5 <= platform.y + 2 &&  // More forgiving collision (+2)
-            state.position.x + 5 > platform.x && 
-            state.position.x < platform.x + platform.width) {
+            playerBottom >= platform.y - 1 &&  // More forgiving collision (-1)
+            playerBottom <= platform.y + 2 &&  // More forgiving collision (+2)
+            playerRight > platform.x && 
+            playerLeft < platform.x + platform.width) {
             
             // Player landed on this platform
-            state.position.y = platform.y - 5;  // Position player on top of platform
+            state.position.y = platform.y - state.currentHeight - state.yOffset;  // Position player on top of platform
             state.physics.velocityY = 0;
             state.physics.isOnGround = true;
             return true;
@@ -221,8 +331,8 @@ bool CheckPlatformCollision() {
         
         // Check if we're no longer on this platform
         if (wasOnGround && 
-            (state.position.x + 5 <= platform.x || 
-             state.position.x >= platform.x + platform.width)) {
+            (playerRight <= platform.x || 
+             playerLeft >= platform.x + platform.width)) {
             // We might have walked off the platform
             // This will be handled by gravity in the next frame
         }
@@ -233,10 +343,16 @@ bool CheckPlatformCollision() {
 
 // Check if player collects any coins
 void CheckCoinCollection() {
+    // Use animated dimensions for coin collection detection
+    int playerLeft = state.position.x + state.xOffset;
+    int playerRight = playerLeft + state.currentWidth;
+    int playerTop = state.position.y + state.yOffset;
+    int playerBottom = playerTop + state.currentHeight;
+    
     for (auto& coin : state.coins) {
         if (coin.active && 
-            state.position.x < coin.x + 1 && state.position.x + PLAYER_WIDTH > coin.x &&
-            state.position.y < coin.y + 1 && state.position.y + PLAYER_HEIGHT > coin.y) {
+            playerLeft < coin.x + 1 && playerRight > coin.x &&
+            playerTop < coin.y + 1 && playerBottom > coin.y) {
             // Coin collected
             coin.active = false;
             state.score += 10;
@@ -321,11 +437,17 @@ DWORD WINAPI MainThread(LPVOID lpParam) {
                 case IL::KEY_A:
                     if (state.position.x > 0) { // Prevent moving past left boundary
                         state.position.x--;
+                        state.isMovingHorizontal = true;
+                        state.lastMoveDirection = -1;
+                        state.moveFrames = 10; // Animation will last for 10 frames
                     }
                     break;
                 case IL::KEY_D:
                     if (state.position.x < SCREEN_WIDTH - PLAYER_WIDTH) { // Prevent moving past right boundary
                         state.position.x++;
+                        state.isMovingHorizontal = true;
+                        state.lastMoveDirection = 1;
+                        state.moveFrames = 10; // Animation will last for 10 frames
                     }
                     break;
                 case IL::KEY_SPACE:
@@ -362,8 +484,12 @@ DWORD WINAPI MainThread(LPVOID lpParam) {
         
         // Check for ground collision only if not on platform
         if (!onPlatform) {
-            if (state.position.y >= state.physics.groundLevel) {
-                state.position.y = state.physics.groundLevel;
+            // Calculate the actual bottom of the player based on animation
+            int playerBottom = state.position.y + state.yOffset + state.currentHeight;
+            
+            if (playerBottom >= state.physics.groundLevel) {
+                // Adjust position based on current height and offset
+                state.position.y = state.physics.groundLevel - state.currentHeight - state.yOffset;
                 state.physics.velocityY = 0;
                 state.physics.isOnGround = true;
             }
@@ -400,6 +526,14 @@ DWORD WINAPI MainThread(LPVOID lpParam) {
         
         // Update explosions
         UpdateExplosions();
+        
+        // Update animation state
+        if (state.moveFrames > 0) {
+            state.moveFrames--;
+            if (state.moveFrames == 0) {
+                state.isMovingHorizontal = false;
+            }
+        }
         
         // Render
         notepad.Begin();

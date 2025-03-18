@@ -287,9 +287,7 @@ void Notepad::Text(const std::string_view& text, int x, int y, bool widthEqualsH
 
     // Copy the text to the buffer without the null terminator
     std::wstring wtext(text.begin(), text.end());
-    for (size_t i = 0; i < length; i++) {
-        this->backBuffer.get()[index + i] = wtext[i];
-    }
+    memcpy(&this->backBuffer.get()[index], wtext.c_str(), length * sizeof(wchar_t));
 }
 
 void Notepad::Rectangle(int x, int y, int width, int height, bool fill, bool widthEqualsHeight) {
