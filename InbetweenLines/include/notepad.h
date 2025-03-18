@@ -9,7 +9,7 @@
 
 namespace IL {
     constexpr int NOTEPAD_WIDTH = 165;
-    constexpr int NOTEPAD_HEIGHT = 37;
+    constexpr int NOTEPAD_HEIGHT = 38;
 
 	constexpr UINT KEY_UP = 0x26;
 	constexpr UINT KEY_DOWN = 0x28;
@@ -53,7 +53,7 @@ namespace IL {
 		void Rectangle(int x, int y, int width, int height, bool fill = false, bool widthEqualsHeight = true);
 
         /// @brief Begins writing to the notepad window
-        void Begin() const;
+        void Begin();
 
         /// @brief Ends writing to the notepad window and flushes the text buffer
 		/// @param targetFPS The target frames per second to wait for before flushing the text buffer (default: 60)
@@ -63,16 +63,19 @@ namespace IL {
         void Flush();
 
         /// @brief Gets the text buffer address
-        wchar_t* GetBuffer();
+        static wchar_t* GetBuffer();
 
         /// @brief Installs a keyboard hook to prevent typing in the notepad
         bool InstallKeyboardHook() const;
         
         /// @brief Uninstalls the keyboard hook
-        bool UninstallKeyboardHook();
+        bool UninstallKeyboardHook() const;
 
-		/// @brief Returns a reference to the keys currently pressed
-		const std::unordered_set<UINT>& GetKeysPressed() const { return keysPressed; }
+        /// @brief Returns a reference to the keys currently pressed
+        static std::unordered_set<UINT>& GetKeysPressed() { return keysPressed; }
+
+        /// @brief Checks if the notepad is valid
+        bool IsValid() const;
     private:
         HWND mainhWnd = nullptr;
         HWND editWnd = nullptr;
@@ -84,5 +87,9 @@ namespace IL {
 		static inline HHOOK s_keyboardHook = nullptr;
 
 		static inline std::unordered_set<UINT> keysPressed = {};
+
+        static inline WNDPROC oEditWndProc = nullptr;
+
+        static LRESULT CALLBACK EditWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
     };
 }

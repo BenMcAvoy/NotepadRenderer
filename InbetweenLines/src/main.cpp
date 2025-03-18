@@ -52,12 +52,12 @@ struct Physics_t {
     const float gravity = 0.5f;
     const float jumpForce = -4.0f;
     bool isOnGround = false;
-    const int groundLevel = 32;
+    const int groundLevel = 33;
     const float terminalVelocity = 5.0f;  // Maximum falling speed
 };
 
 struct State_t {
-    Vector2 position;
+    Vector2 position = {SCREEN_WIDTH / 2 - PLAYER_WIDTH / 2, 0};
     Physics_t physics;
     int blinkTimer = 0;      // Timer for controlling eye blinks
     bool isBlinking = false; // Whether eyes are currently blinking
@@ -73,33 +73,8 @@ struct State_t {
 
 // Function to render the player with blinking eyes
 void RenderPlayer(IL::Notepad& notepad, State_t& state) {
-    // Render player body
-    notepad.Rectangle(state.position.x, state.position.y, 5, 5, false);
-    
-    // Update blinking logic
-    state.blinkTimer++;
-    
-    // Randomly start blinking every ~2 seconds (120 frames)
-    if (state.blinkTimer >= 120) {
-        state.blinkTimer = 0;
-        // 70% chance to blink
-        state.isBlinking = (rand() % 100) < 70;
-    }
-    
-    // Stop blinking after 10 frames
-    if (state.isBlinking && state.blinkTimer > 10) {
-        state.isBlinking = false;
-    }
-    
-    // Draw the eyes
-    if (state.isBlinking) {
-        notepad.Text(state.position.x + 1, state.position.y + 1, " -  -"); // Closed eyes
-    } else {
-        notepad.Text(state.position.x + 1, state.position.y + 1, " O  O"); // Open eyes
-    }
-
-	// Draw the mouth
-	notepad.Text(state.position.x + 1, state.position.y + 3, " ~~~~");
+    notepad.Rectangle(state.position.x, state.position.y, PLAYER_WIDTH, PLAYER_HEIGHT, true);
+    notepad.Text("O", state.position.x + 1, state.position.y + 1);
 }
 
 // Function to render platforms
@@ -341,7 +316,7 @@ DWORD WINAPI MainThread(LPVOID lpParam) {
     
     while (running.load()) {
         // Process keyboard input
-        for (const auto key : notepad.GetKeysPressed()) {
+        for (auto key : notepad.GetKeysPressed()) {
             switch (key) {
                 case IL::KEY_A:
                     if (state.position.x > 0) { // Prevent moving past left boundary
@@ -432,14 +407,15 @@ DWORD WINAPI MainThread(LPVOID lpParam) {
         // Display score and active coin count in top-left
         notepad.Text(1, 1, "Score: " + std::to_string(state.score) + 
                           " Coins: " + std::to_string(state.coins.size()) + 
-                          " Timer: " + std::to_string(state.coinSpawnTimer));
+                          " Time till next coin (s): " + std::to_string((state.coinSpawnInterval - state.coinSpawnTimer) / 60));
         
         RenderPlatforms(notepad, state.platforms);  // Render platforms
         RenderCoins(notepad, state.coins, state.coinLifetime);  // Render coins with degradation
         RenderExplosions(notepad, state.explosions);  // Render explosions
         RenderPlayer(notepad, state);               // Render player
 
-		notepad.Text(1, IL::NOTEPAD_HEIGHT - 1, "By Ben McAvoy (https://github.com/BenMcAvoy");
+		notepad.Text(1, IL::NOTEPAD_HEIGHT - 2, "By Ben McAvoy (https://github.com/BenMcAvoy)");
+        notepad.Text(1, IL::NOTEPAD_HEIGHT - 1, "Press A and D to move, SPACE to jump. Collect coins before they explode!");
         notepad.End();
         
         Sleep(16); // ~60fps
