@@ -1,7 +1,7 @@
 #include "notepad.h"
 
-#include <cstdlib>
 #include <format>
+#include <cstdlib>
 #include <thread>
 
 #undef ERROR
@@ -10,12 +10,28 @@
 
 using namespace IL; // InbetweenLines implementation file, this is fine
 
-LRESULT CALLBACK KeyboardProc(int code, WPARAM wParam, LPARAM lParam) {
-    return 1;
+// Keyboard hook procedure implementation
+LRESULT CALLBACK Notepad::KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    if (nCode < 0) {
+		return CallNextHookEx(s_keyboardHook, nCode, wParam, lParam);
+    }
+
+    // For WH_KEYBOARD, wParam contains the virtual key code
+    UINT vkCode = static_cast<UINT>(wParam);
+
+	bool press = (lParam & (1 << 31)) == 0;
+	if (press) {
+		keysPressed.insert(vkCode);
+	}
+	else {
+		keysPressed.erase(vkCode);
+	}
+
+    return 1; // Block the key
 }
 
 Notepad::Notepad() {
-    HANDLE hProcess = GetCurrentProcess();
+    //HANDLE hProcess = GetCurrentProcess();
     DWORD pid = GetCurrentProcessId();
 
      for (HWND curWnd = GetTopWindow(nullptr); curWnd != nullptr; curWnd = GetNextWindow(curWnd, GW_HWNDNEXT)) {
@@ -24,7 +40,7 @@ Notepad::Notepad() {
         GetWindowThreadProcessId(curWnd, &wndPid);
         if (wndPid != pid) continue;
             
-        char wndClass[256] = {0};
+        char wndClass[256] = {0}; // NOSONAR
         GetClassNameA(curWnd, wndClass, 256);
         if (strcmp(wndClass, "Notepad") != 0) continue;
 
@@ -73,13 +89,61 @@ Notepad::Notepad() {
 
 	// Wipe out the text buffer
 	memset(GetBuffer(), 0, utf16CharCount);
-    memset(backBuffer, 0, utf16CharCount);
+    memset(this->backBuffer.get(), 0, utf16CharCount);
 	Flush();
+    
+    // Install the keyboard hook to prevent user typing
+    InstallKeyboardHook();
 }
 
 Notepad::~Notepad() {
+    // Uninstall the keyboard hook before destroying the notepad
+    UninstallKeyboardHook();
+    
     SetWindowLong(mainhWnd, GWL_STYLE, GetWindowLong(mainhWnd, GWL_STYLE) | WS_MAXIMIZEBOX | WS_SIZEBOX);
     SetWindowPos(mainhWnd, nullptr, 0, 0, 1365, 768, SWP_NOMOVE | SWP_NOZORDER);
+}
+
+bool Notepad::InstallKeyboardHook() const {
+    if (s_keyboardHook != NULL) {
+		ERROR("Keyboard hook already installed");
+        return true;
+    }
+    
+    if (editWnd == nullptr) {
+        ERROR("Cannot install hook: Edit window not found");
+        return false;
+    }
+    
+    DWORD threadId = GetWindowThreadProcessId(editWnd, NULL);
+    if (threadId == 0) {
+        ERROR("Failed to get window thread ID");
+        return false;
+    }
+    
+    s_keyboardHook = SetWindowsHookEx(WH_KEYBOARD, KeyboardProc, NULL, threadId);
+    
+    if (s_keyboardHook == NULL) {
+        ERROR(std::format("SetWindowsHookEx failed with error code: {}", GetLastError()).c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool Notepad::UninstallKeyboardHook() {
+    if (s_keyboardHook == NULL) {
+        // No hook to uninstall
+        return true;
+    }
+    
+    bool result = UnhookWindowsHookEx(s_keyboardHook);
+    if (!result) {
+        ERROR(std::format("UnhookWindowsHookEx failed with error code: {}", GetLastError()).c_str());
+    }
+    
+    s_keyboardHook = NULL;
+    return result;
 }
 
 void Notepad::Text(const std::string_view& text, int x, int y, bool widthEqualsHeight) {
@@ -100,7 +164,32 @@ void Notepad::Text(const std::string_view& text, int x, int y, bool widthEqualsH
 
     // Copy the text to the buffer
     std::wstring wtext(text.begin(), text.end());
-    wcsncpy_s(&this->backBuffer[index], length + 1, wtext.c_str(), length);
+    wcsncpy_s(&this->backBuffer.get()[index], length + 1, wtext.c_str(), length);
+}
+
+void Notepad::Rectangle(int x, int y, int width, int height, bool fill, bool widthEqualsHeight) {
+    if (widthEqualsHeight) {
+		x *= 2;
+		width *= 2;
+    }
+
+    wchar_t* buffer = GetBuffer();
+    if (buffer == nullptr) {
+        ERROR("Failed to get text buffer address");
+        return;
+    }
+    for (int i = 0; i < width; i++) {
+        for (int j = 0; j < height; j++) {
+            int index = ((y + j) * NOTEPAD_WIDTH) + (x + i);
+            if (index >= NOTEPAD_WIDTH * NOTEPAD_HEIGHT) {
+                ERROR("Rectangle out of bounds");
+                return;
+            }
+            if (fill || i == 0 || i == width - 1 || j == 0 || j == height - 1) {
+                this->backBuffer.get()[index] = L'#';
+            }
+        }
+    }
 }
 
 void Notepad::Flush() {
@@ -112,11 +201,11 @@ wchar_t* Notepad::GetBuffer() {
 	return (wchar_t*)**(uintptr_t**)((uintptr_t)GetModuleHandle(nullptr) + 0x356C0);
 }
 
-void Notepad::Begin() {
-    memset(backBuffer, 0, sizeof(backBuffer));
+void Notepad::Begin() const {
+	memset(backBuffer.get(), 0, NOTEPAD_WIDTH * NOTEPAD_HEIGHT * 2);
 }
 
-void Notepad::End() {
+void Notepad::End(int targetFPS) {
     wchar_t* buffer = GetBuffer();
     if (buffer == nullptr) {
         ERROR("Failed to get text buffer address");
@@ -124,16 +213,15 @@ void Notepad::End() {
     }
 
     static std::chrono::steady_clock::time_point lastTime = std::chrono::steady_clock::now();
-    static const int fps = 30;
     auto currentTime = std::chrono::steady_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - lastTime).count();
-    int delay = 1000 / fps - elapsed;
+    int delay = 1000 / targetFPS - (int)elapsed;
     if (delay > 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(delay));
     }
     
     lastTime = std::chrono::steady_clock::now();
 
-    memcpy(buffer, backBuffer, sizeof(backBuffer));
+	memcpy(buffer, backBuffer.get(), NOTEPAD_WIDTH * NOTEPAD_HEIGHT * 2);
     Flush();
 }

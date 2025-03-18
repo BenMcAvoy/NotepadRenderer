@@ -30,7 +30,7 @@ constexpr int PROCESS_STARTUP_DELAY_MS = 200;
 // Function declarations
 std::vector<fs::path> findFiles();
 fs::path findDllToInject(const std::vector<fs::path>& files);
-DWORD findOrStartProcess(const char* processName, const char* executablePath);
+DWORD findOrStartProcess(const std::string_view& processName, const std::string_view& executablePath);
 bool injectDll(DWORD pid, const fs::path& dllPath);
 bool isDllInjected(DWORD pid, const fs::path& dllPath, MODULEENTRY32* outModule = nullptr);
 bool unloadDll(DWORD pid, MODULEENTRY32& module);
@@ -98,6 +98,7 @@ int main(void) {
         return 1;
     }
 
+    // No need to keep the launcher running anymore - hook is managed by the DLL
     return 0;
 }
 
@@ -202,7 +203,7 @@ fs::path getTempFilePath(const fs::path& tempDir, const fs::path& file) {
     return tempDir / file;
 }
 
-DWORD findOrStartProcess(const char* processName, const char* executablePath) {
+DWORD findOrStartProcess(const std::string_view& processName, const std::string_view& executablePath) {
     // Create snapshot of running processes
     HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (hSnap == INVALID_HANDLE_VALUE) {
@@ -220,7 +221,7 @@ DWORD findOrStartProcess(const char* processName, const char* executablePath) {
 
     DWORD pid = 0;
     do {
-        if (strcmp(pe32.szExeFile, processName) == 0) {
+        if (strcmp(pe32.szExeFile, processName.data()) == 0) {
             pid = pe32.th32ProcessID;
             break;
         }
@@ -233,7 +234,7 @@ DWORD findOrStartProcess(const char* processName, const char* executablePath) {
         STARTUPINFOA si = { sizeof(STARTUPINFOA) };
         PROCESS_INFORMATION pi = { 0 };
         
-        if (!CreateProcessA(executablePath, nullptr, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
+        if (!CreateProcessA(executablePath.data(), nullptr, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
             ERROR("CreateProcess failed");
             return 0;
         }
@@ -343,7 +344,7 @@ bool isDllInjected(DWORD pid, const fs::path& dllPath, MODULEENTRY32* outModule)
         ERROR("CreateToolhelp32Snapshot failed");
         return false;
     }
-
+    
     MODULEENTRY32 me32 = { sizeof(MODULEENTRY32) };
     if (!Module32First(hSnap, &me32)) {
         DWORD err = GetLastError();
@@ -353,13 +354,15 @@ bool isDllInjected(DWORD pid, const fs::path& dllPath, MODULEENTRY32* outModule)
         CloseHandle(hSnap);
         return false;
     }
-
-    std::string targetPath = dllPath.string();
+    
+    // Extract just the filename from the DLL path we want to check.
+    std::string targetFilename = dllPath.filename().string();
     bool found = false;
     
     do {
-        std::string modulePath = me32.szExePath;
-        if (_stricmp(modulePath.c_str(), targetPath.c_str()) == 0) {
+        // Extract the filename from the module's full path.
+        std::string moduleFilename = fs::path(me32.szExePath).filename().string();
+        if (_stricmp(moduleFilename.c_str(), targetFilename.c_str()) == 0) {
             found = true;
             if (outModule != nullptr) {
                 *outModule = me32;
@@ -399,7 +402,7 @@ bool unloadDll(DWORD pid, MODULEENTRY32& module) {
         nullptr, 
         0, 
         reinterpret_cast<LPTHREAD_START_ROUTINE>(pFreeLibrary), 
-        module.modBaseAddr, 
+        module.hModule,
         0, 
         nullptr
     );
