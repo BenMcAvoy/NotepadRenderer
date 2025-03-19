@@ -144,7 +144,7 @@ void RenderPlayer(IL::Notepad& notepad, State_t& state) {
     
     // Render player body with adjusted dimensions
     notepad.Rectangle(state.position.x + xOffset, state.position.y + yOffset, 
-                     adjustedWidth, adjustedHeight, false);
+                     adjustedWidth, adjustedHeight, false, "#");
     
     // Update blinking logic
     state.blinkTimer++;
@@ -185,6 +185,7 @@ void RenderPlayer(IL::Notepad& notepad, State_t& state) {
 // Function to render platforms
 void RenderPlatforms(IL::Notepad& notepad, const std::vector<Platform>& platforms) {
     for (const auto& platform : platforms) {
+        // draw with block character
         notepad.Rectangle(platform.x, platform.y, platform.width, platform.height, true);
     }
 }
