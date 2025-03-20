@@ -1,12 +1,6 @@
+#include "pch.h"
+
 #include "notepad.h"
-
-#include <format>
-#include <cstdlib>
-#include <thread>
-
-#undef ERROR
-#define INFO(x) MessageBoxA(nullptr, x, "InbetweenLines - Info", MB_OK)
-#define ERROR(x) MessageBoxA(nullptr, std::format("[!] {} ({}, {}:{})", x, __FUNCTION__, __FILE__, __LINE__).c_str(), "InbetweenLines - Error", MB_OK)
 
 using namespace IL; // InbetweenLines implementation file, this is fine
 
@@ -31,111 +25,93 @@ LRESULT CALLBACK Notepad::KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) 
 }
 
 LRESULT CALLBACK Notepad::EditWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
-    // Block selection-related messages
-    if (message == WM_LBUTTONDOWN || 
+    // Block selection-related messages and text updates
+    if (message == WM_PAINT || 
+        message == WM_SETTEXT || 
+        message == WM_LBUTTONDOWN || 
         message == WM_LBUTTONUP || 
         message == WM_MOUSEMOVE || 
-        message == WM_SETCURSOR) {
-        return 0;
-    }
-    
-    // Handle erasing the background - prevent default erase to avoid flicker
-    if (message == WM_ERASEBKGND) {
-        return 1; // Prevent Windows from erasing the background, we do it ourselves
-    }
-    
-    // Handle the paint message with no-flicker rendering
-    if (message == WM_PAINT) {
-        PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hWnd, &ps);
+        message == WM_SETCURSOR ||
+        message == WM_CHAR ||     // Block character input
+        message == WM_KEYDOWN ||  // Block key events
+        message == WM_KEYUP) {    // Block key events
         
-        // Get client area dimensions
-        RECT clientRect;
-        GetClientRect(hWnd, &clientRect);
-        int width = clientRect.right - clientRect.left;
-        int height = clientRect.bottom - clientRect.top;
-        
-        // Create memory DC and bitmap for double buffering
-        HDC memDC = CreateCompatibleDC(hdc);
-        HBITMAP memBitmap = CreateCompatibleBitmap(hdc, width, height);
-        HBITMAP oldBitmap = (HBITMAP)SelectObject(memDC, memBitmap);
-        
-        // Fill memory DC with white background
-        HBRUSH whiteBrush = CreateSolidBrush(RGB(255, 255, 255));
-        FillRect(memDC, &clientRect, whiteBrush);
-        DeleteObject(whiteBrush);
-        
-        // Get the current Notepad instance
-        Notepad* pThis = reinterpret_cast<Notepad*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
-        
-        // Draw text if we have a valid instance and buffer
-        if (pThis && pThis->IsValid()) {
-            wchar_t* buffer = pThis->GetBuffer();
+        if (message == WM_PAINT) {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hWnd, &ps);
             
-            // Calculate ideal font size to fill the screen
-            int fontHeight = height / NOTEPAD_HEIGHT;
-            int fontWidth = width / (NOTEPAD_WIDTH + 1); // Add 1 for safety margin
+            // Get client area dimensions
+            RECT clientRect;
+            GetClientRect(hWnd, &clientRect);
+            int width = clientRect.right - clientRect.left;
+            int height = clientRect.bottom - clientRect.top;
             
-            // Create a font that fits the screen betterers
-            HFONT hFont = CreateFont(
-                fontHeight, fontWidth > 0 ? fontWidth : 0, 
-                0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                FIXED_PITCH | FF_MODERN, L"Consolas"
-            );
-            HFONT oldFont = (HFONT)SelectObject(memDC, hFont);
+            // Create memory DC and bitmap for double buffering
+            HDC memDC = CreateCompatibleDC(hdc);
+            HBITMAP memBitmap = CreateCompatibleBitmap(hdc, width, height);
+            HBITMAP oldBitmap = (HBITMAP)SelectObject(memDC, memBitmap);
             
-            // Set up text drawing with UTF-8 support
-            SetTextColor(memDC, RGB(0, 0, 0));
-            SetBkColor(memDC, RGB(255, 255, 255));
-            SetBkMode(memDC, OPAQUE);
+            // Fill background once
+            HBRUSH whiteBrush = CreateSolidBrush(RGB(255, 255, 255));
+            FillRect(memDC, &clientRect, whiteBrush);
+            DeleteObject(whiteBrush);
             
-            // Get text metrics
-            TEXTMETRIC tm;
-            GetTextMetrics(memDC, &tm);
-            int lineHeight = fontHeight; // Use exact font height for consistent spacing
+            // Get the current Notepad instance
+            Notepad* pThis = reinterpret_cast<Notepad*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
             
-            // Draw each line of text with proper clipping
-            for (int y = 0; y < NOTEPAD_HEIGHT; y++) {
-                // Calculate the Y position for this line
-                int yPos = y * lineHeight;
+            if (pThis && pThis->IsValid()) {
+                wchar_t* buffer = pThis->GetBuffer();
                 
-                // Define the rectangle where this line will be drawn
-                RECT lineRect = {
-                    0,              // Left
-                    yPos,           // Top
-                    width,          // Right
-                    yPos + lineHeight  // Bottom
-                };
+                // Calculate font size
+                int fontHeight = height / NOTEPAD_HEIGHT;
+                int fontWidth = width / (NOTEPAD_WIDTH + 1);
                 
-                // Draw a complete line at a time with proper clipping
-                ExtTextOutW(
-                    memDC,
-                    0, yPos,
-                    ETO_CLIPPED | ETO_OPAQUE,
-                    &lineRect,
-                    &buffer[y * NOTEPAD_WIDTH],
-                    NOTEPAD_WIDTH,
-                    nullptr
+                // Create font with simpler settings
+                HFONT hFont = CreateFont(
+                    fontHeight, fontWidth > 0 ? fontWidth : 0, 
+                    0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                    ANSI_CHARSET,
+                    OUT_DEFAULT_PRECIS,
+                    CLIP_DEFAULT_PRECIS,
+                    DEFAULT_QUALITY,
+                    FIXED_PITCH | FF_MODERN,
+                    L"Consolas"
                 );
+                
+                HFONT oldFont = (HFONT)SelectObject(memDC, hFont);
+                SetTextColor(memDC, RGB(0, 0, 0));
+                SetBkMode(memDC, TRANSPARENT);  // Try transparent background
+                
+                // Draw text line by line
+                for (int y = 0; y < NOTEPAD_HEIGHT; y++) {
+                    TextOutW(
+                        memDC,
+                        0, y * fontHeight,
+                        &buffer[y * NOTEPAD_WIDTH],
+                        NOTEPAD_WIDTH
+                    );
+                }
+                
+                SelectObject(memDC, oldFont);
+                DeleteObject(hFont);
             }
             
-            // Clean up font
-            SelectObject(memDC, oldFont);
-            DeleteObject(hFont);
+            // Copy to screen
+            BitBlt(hdc, 0, 0, width, height, memDC, 0, 0, SRCCOPY);
+            
+            // Cleanup
+            SelectObject(memDC, oldBitmap);
+            DeleteObject(memBitmap);
+            DeleteDC(memDC);
+            
+            EndPaint(hWnd, &ps);
+            return 0;
         }
-        
-        // Blit from memory DC to screen DC
-        BitBlt(hdc, 0, 0, width, height, memDC, 0, 0, SRCCOPY);
-        
-        // Clean up
-        SelectObject(memDC, oldBitmap);
-        DeleteObject(memBitmap);
-        DeleteDC(memDC);
-        
-        EndPaint(hWnd, &ps);
-        return 0;
+        return 0;  // Block other messages
+    }
+    
+    if (message == WM_ERASEBKGND) {
+        return 1;  // Prevent background erasing
     }
 
     return CallWindowProc(oEditWndProc, hWnd, message, wParam, lParam);
@@ -247,7 +223,7 @@ bool Notepad::InstallKeyboardHook() const {
     s_keyboardHook = SetWindowsHookEx(WH_KEYBOARD, KeyboardProc, NULL, threadId);
     
     if (s_keyboardHook == NULL) {
-        ERROR(std::format("SetWindowsHookEx failed with error code: {}", GetLastError()).c_str());
+        ERROR("SetWindowsHookEx failed with error code: {}", GetLastError());
         return false;
     }
 
@@ -262,7 +238,7 @@ bool Notepad::UninstallKeyboardHook() const {
     
     bool result = UnhookWindowsHookEx(s_keyboardHook);
     if (!result) {
-        ERROR(std::format("UnhookWindowsHookEx failed with error code: {}", GetLastError()).c_str());
+        ERROR("UnhookWindowsHookEx failed with error code: {}", GetLastError());
     }
     
     s_keyboardHook = NULL;
@@ -329,10 +305,7 @@ void Notepad::Rectangle(int x, int y, int width, int height, bool fill, bool wid
 }
 
 void Notepad::Flush() {
-    // Invalidate without erasing the background
-    if (editWnd) {
-        InvalidateRect(editWnd, nullptr, FALSE);
-    }
+    // No-op now, we handle invalidation in End()
 }
 
 wchar_t* Notepad::GetBuffer() {
@@ -355,28 +328,33 @@ void Notepad::End(int targetFPS) {
         return;
     }
     
-    // Calculate frame timing for consistent FPS
-    static std::chrono::steady_clock::time_point lastTime = std::chrono::steady_clock::now();
-    auto currentTime = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - lastTime).count();
-    
-    // Sleep for frame timing if needed
-    int delay = 1000 / targetFPS - static_cast<int>(elapsed);
-    if (delay > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(delay));
-    }
-    
-    lastTime = std::chrono::steady_clock::now();
+    // Target frame time in microseconds
+    static const long long targetFrameTime = 1000000 / targetFPS;
+    static auto lastFrameTime = std::chrono::high_resolution_clock::now();
     
     // Swap buffers in one atomic operation
     size_t bufferSize = NOTEPAD_WIDTH * NOTEPAD_HEIGHT * sizeof(wchar_t);
     memcpy(frontBuffer, backBuffer.get(), bufferSize);
     
-    // Request a repaint WITHOUT erasing the background
+    // Only invalidate once, don't call UpdateWindow
     if (editWnd) {
         InvalidateRect(editWnd, nullptr, FALSE);
-        UpdateWindow(editWnd); // Process the paint message immediately
     }
+    
+    // Frame timing code...
+    auto now = std::chrono::high_resolution_clock::now();
+    auto elapsedTime = std::chrono::duration_cast<std::chrono::microseconds>(
+        now - lastFrameTime).count();
+    
+    long long sleepTime = targetFrameTime - elapsedTime;
+    if (sleepTime > 0) {
+        auto sleepUntil = now + std::chrono::microseconds(sleepTime);
+        while (std::chrono::high_resolution_clock::now() < sleepUntil) {
+            std::this_thread::yield();
+        }
+    }
+    
+    lastFrameTime = std::chrono::high_resolution_clock::now();
 }
 
 bool Notepad::IsValid() const {

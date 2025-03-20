@@ -16,6 +16,8 @@
 #include <format>
 #include <atomic>
 #include <vector>
+#include <thread>
+#include <chrono>
 #include <ctime>
 
 #undef ERROR

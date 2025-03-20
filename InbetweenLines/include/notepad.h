@@ -1,15 +1,10 @@
 #pragma once
 
-#define WIN32_LEAN_AND_MEAN
-#include <Windows.h>
-#include <string>
-#include <memory>
-#include <format>
-#include <unordered_set>
+#include "pch.h"
 
 namespace IL {
     constexpr int NOTEPAD_WIDTH = 165;
-    constexpr int NOTEPAD_HEIGHT = 38;
+    constexpr int NOTEPAD_HEIGHT = 37;
 
     constexpr UINT KEY_UP = 0x26;
     constexpr UINT KEY_DOWN = 0x28;
